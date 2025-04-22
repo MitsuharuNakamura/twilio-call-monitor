@@ -8,7 +8,7 @@ on:
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    environment: production  # 環境を指定
+    environment: Production  # 環境名をProductionに変更
     
     steps:
       - name: Checkout code
