@@ -23,6 +23,10 @@ def format_duration(seconds):
     if seconds is None:
         return "In progress"
     
+    # Convert to integer if it's a string
+    if isinstance(seconds, str):
+        seconds = int(seconds)
+    
     minutes, seconds = divmod(seconds, 60)
     hours, minutes = divmod(minutes, 60)
     
@@ -114,8 +118,11 @@ def monitor_calls():
             in_progress_calls.append(call_info)
         
         # Check for long calls (duration > threshold)
-        if call.duration and int(call.duration) > LONG_CALL_THRESHOLD:
-            long_calls.append(call_info)
+        if call.duration:
+            # Convert duration to integer if it's a string
+            duration = int(call.duration) if call.duration else 0
+            if duration > LONG_CALL_THRESHOLD:
+                long_calls.append(call_info)
     
     # Print summary
     print(f"Found {len(long_calls)} calls longer than 10 minutes")
