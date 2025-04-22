@@ -18,14 +18,16 @@ FROM_EMAIL = os.environ.get('FROM_EMAIL')
 # Threshold for long calls (10 minutes in seconds)
 LONG_CALL_THRESHOLD = 10 * 60
 
-def format_duration(seconds):
+def format_duration(seconds_str):
     """Format seconds into a human-readable duration."""
-    if seconds is None:
+    if seconds_str is None:
         return "In progress"
     
-    # Convert to integer if it's a string
-    if isinstance(seconds, str):
-        seconds = int(seconds)
+    # Convert string to integer - Twilio returns duration as a string
+    try:
+        seconds = int(seconds_str)
+    except (ValueError, TypeError):
+        return str(seconds_str)  # Return as is if conversion fails
     
     minutes, seconds = divmod(seconds, 60)
     hours, minutes = divmod(minutes, 60)
@@ -93,44 +95,52 @@ def monitor_calls():
     
     print(f"Starting Twilio call monitoring at {datetime.now()}")
     
-    # Initialize Twilio client
-    client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-    
-    # Get recent calls (adjust limit as needed)
-    calls = client.calls.list(limit=50)
-    
-    long_calls = []
-    in_progress_calls = []
-    
-    for call in calls:
-        # Basic call information
-        call_info = {
-            'sid': call.sid,
-            'from_number': call.from_formatted,
-            'to_number': call.to_formatted,
-            'status': call.status,
-            'start_time': call.start_time.strftime('%Y-%m-%d %H:%M:%S') if call.start_time else "Unknown",
-            'duration': format_duration(call.duration) if call.duration else None
-        }
+    try:
+        # Initialize Twilio client
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
         
-        # Check for in-progress calls
-        if call.status in ['in-progress', 'ringing', 'queued']:
-            in_progress_calls.append(call_info)
+        # Get recent calls (adjust limit as needed)
+        calls = client.calls.list(limit=50)
         
-        # Check for long calls (duration > threshold)
-        if call.duration:
-            # Convert duration to integer if it's a string
-            duration = int(call.duration) if call.duration else 0
-            if duration > LONG_CALL_THRESHOLD:
-                long_calls.append(call_info)
-    
-    # Print summary
-    print(f"Found {len(long_calls)} calls longer than 10 minutes")
-    print(f"Found {len(in_progress_calls)} calls currently in progress")
-    
-    # Send notification if needed
-    if long_calls or in_progress_calls:
-        send_notification(long_calls, in_progress_calls)
+        long_calls = []
+        in_progress_calls = []
+        
+        for call in calls:
+            # Debug print
+            print(f"Call SID: {call.sid}, Duration: {call.duration}, Type: {type(call.duration)}")
+            
+            # Basic call information
+            call_info = {
+                'sid': call.sid,
+                'from_number': call.from_formatted,
+                'to_number': call.to_formatted,
+                'status': call.status,
+                'start_time': call.start_time.strftime('%Y-%m-%d %H:%M:%S') if call.start_time else "Unknown",
+                'duration': format_duration(call.duration) if call.duration else "In progress"
+            }
+            
+            # Check for in-progress calls
+            if call.status in ['in-progress', 'ringing', 'queued']:
+                in_progress_calls.append(call_info)
+            
+            # Check for long calls (duration > threshold)
+            try:
+                if call.duration and int(call.duration) > LONG_CALL_THRESHOLD:
+                    long_calls.append(call_info)
+            except (ValueError, TypeError) as e:
+                print(f"Error processing duration for call {call.sid}: {e}")
+        
+        # Print summary
+        print(f"Found {len(long_calls)} calls longer than 10 minutes")
+        print(f"Found {len(in_progress_calls)} calls currently in progress")
+        
+        # Send notification if needed
+        if long_calls or in_progress_calls:
+            send_notification(long_calls, in_progress_calls)
+        
+    except Exception as e:
+        print(f"Error in monitor_calls: {e}")
+        sys.exit(1)
     
     print("Monitoring completed.")
 
