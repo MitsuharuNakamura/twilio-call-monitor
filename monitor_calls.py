@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import os
 import sys
+import json
+import hashlib
 from datetime import datetime, timedelta
 from twilio.rest import Client
 from sendgrid import SendGridAPIClient
@@ -17,6 +19,9 @@ FROM_EMAIL = os.environ.get('FROM_EMAIL')
 
 # Threshold for long calls (10 minutes in seconds)
 LONG_CALL_THRESHOLD = 10 * 60
+
+# File to store previous notification data
+LAST_NOTIFICATION_FILE = "/tmp/twilio_last_notification.json"
 
 def format_duration(seconds_str):
     """Format seconds into a human-readable duration."""
@@ -39,10 +44,68 @@ def format_duration(seconds_str):
     else:
         return f"{seconds}s"
 
+def calculate_notification_hash(long_calls, in_progress_calls):
+    """Calculate a hash of the call data to track duplicates."""
+    combined_data = []
+    
+    # Add long calls data
+    for call in long_calls:
+        combined_data.append(f"{call['sid']}:{call['duration']}")
+    
+    # Add in-progress calls data
+    for call in in_progress_calls:
+        combined_data.append(f"{call['sid']}:{call['status']}")
+    
+    # Sort for consistency
+    combined_data.sort()
+    
+    # Create a single string and hash it
+    data_string = "|".join(combined_data)
+    return hashlib.md5(data_string.encode()).hexdigest()
+
+def is_duplicate_notification(long_calls, in_progress_calls):
+    """Check if this notification is a duplicate of the previous one."""
+    current_hash = calculate_notification_hash(long_calls, in_progress_calls)
+    
+    try:
+        # Check if we have a previous notification file
+        if os.path.exists(LAST_NOTIFICATION_FILE):
+            with open(LAST_NOTIFICATION_FILE, 'r') as f:
+                last_data = json.load(f)
+                last_hash = last_data.get('hash', '')
+                last_time = last_data.get('time', '')
+                
+                # If hash matches, it's a duplicate
+                if current_hash == last_hash:
+                    print(f"Duplicate notification detected. Last sent at {last_time}")
+                    return True
+    except Exception as e:
+        print(f"Error checking duplicate notification: {e}")
+    
+    # Save current notification data
+    try:
+        with open(LAST_NOTIFICATION_FILE, 'w') as f:
+            data = {
+                'hash': current_hash,
+                'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'long_calls_count': len(long_calls),
+                'in_progress_calls_count': len(in_progress_calls)
+            }
+            json.dump(data, f)
+    except Exception as e:
+        print(f"Error saving notification data: {e}")
+    
+    return False
+
 def send_notification(long_calls, in_progress_calls):
     """Send email notification about detected calls."""
     if not long_calls and not in_progress_calls:
         print("No calls to report.")
+        return
+    
+    # Check if this is a duplicate notification
+    if is_duplicate_notification(long_calls, in_progress_calls):
+        print("Skipping duplicate notification")
         return
     
     # Create message content
