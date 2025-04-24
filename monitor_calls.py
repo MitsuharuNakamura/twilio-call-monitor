@@ -161,41 +161,54 @@ def monitor_calls():
     try:
         # Initialize Twilio client
         client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-        
-        # Get recent calls (adjust limit as needed)
-        calls = client.calls.list(limit=50)
-        
+
+        # Define window for recent call data (last 10 minutes)
+        window_start = datetime.utcnow() - timedelta(minutes=10)
+
+        # Fetch calls (adjust limit as needed)
+        calls = client.calls.list(limit=100)
+
         long_calls = []
         in_progress_calls = []
-        
+
         for call in calls:
-            # Debug print
-            print(f"Call SID: {call.sid}, Duration: {call.duration}, Type: {type(call.duration)}")
-            
-            # Basic call information
-            call_info = {
-                'sid': call.sid,
-                'from_number': call.from_formatted,
-                'to_number': call.to_formatted,
-                'status': call.status,
-                'start_time': call.start_time.strftime('%Y-%m-%d %H:%M:%S') if call.start_time else "Unknown",
-                'duration': format_duration(call.duration) if call.duration else "In progress"
-            }
-            
-            # Check for in-progress calls
+            # Parse start and end times
+            start_dt = call.start_time.replace(tzinfo=None) if call.start_time else None
+            end_dt = call.end_time.replace(tzinfo=None) if getattr(call, 'end_time', None) else None
+
+            # Detect in-progress calls that started within the window
             if call.status in ['in-progress', 'ringing', 'queued']:
-                in_progress_calls.append(call_info)
-            
-            # Check for long calls (duration > threshold)
-            try:
-                if call.duration and int(call.duration) > LONG_CALL_THRESHOLD:
-                    long_calls.append(call_info)
-            except (ValueError, TypeError) as e:
-                print(f"Error processing duration for call {call.sid}: {e}")
-        
+                if start_dt and start_dt >= window_start:
+                    call_info = {
+                        'sid': call.sid,
+                        'from_number': call.from_formatted,
+                        'to_number': call.to_formatted,
+                        'status': call.status,
+                        'start_time': start_dt.strftime('%Y-%m-%d %H:%M:%S'),
+                        'duration': 'In progress'
+                    }
+                    in_progress_calls.append(call_info)
+                continue
+
+            # Detect completed long calls that ended within the window
+            if call.status == 'completed' and end_dt and end_dt >= window_start:
+                try:
+                    if call.duration and int(call.duration) >= LONG_CALL_THRESHOLD:
+                        call_info = {
+                            'sid': call.sid,
+                            'from_number': call.from_formatted,
+                            'to_number': call.to_formatted,
+                            'status': call.status,
+                            'start_time': start_dt.strftime('%Y-%m-%d %H:%M:%S') if start_dt else 'Unknown',
+                            'duration': format_duration(call.duration)
+                        }
+                        long_calls.append(call_info)
+                except (ValueError, TypeError) as e:
+                    print(f"Error processing duration for call {call.sid}: {e}")
+
         # Print summary
-        print(f"Found {len(long_calls)} calls longer than 10 minutes")
-        print(f"Found {len(in_progress_calls)} calls currently in progress")
+        print(f"Found {len(long_calls)} calls longer than 10 minutes in last 10 minutes")
+        print(f"Found {len(in_progress_calls)} calls currently in progress within last 10 minutes")
         
         # Send notification if needed
         if long_calls or in_progress_calls:
